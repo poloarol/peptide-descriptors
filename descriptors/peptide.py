@@ -8,7 +8,8 @@ Provides methods to obtain peptide descriptors.
     3. frequency of canonicals vs non-canonicals in the sequence
 """
 
-from typing import List, Dict
+from typing import List, Dict, NamedTuple
+from collections import namedtuple
 from itertools import combinations
 
 import numpy as np
@@ -24,6 +25,9 @@ aa_code: Dict[str, str] = {'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS'
                             'GLY': 'G', 'HIS': 'H', 'LEU': 'L', 'ARG': 'R', 'TRP': 'W', 
                             'ALA': 'A', 'VAL':'V', 'GLU': 'E', 'TYR': 'Y', 'MET': 'M'}
 
+
+BOND_LENGTHS: NamedTuple = namedtuple('BondLengths', 'min max')
+
 class Peptide(object):
     """
     class Peptide
@@ -33,9 +37,9 @@ class Peptide(object):
     """
     
     def __init__(self, chain: Chain):
-        self.chain = chain
-        self.peptide_length = [2, 4]
-        self.disulfide_length = [3, 5]
+        self.chain: Chain = chain
+        self.peptide_length: NamedTuple = BOND_LENGTHS(2.0, 4.0) # bond lengths should be ammended
+        self.disulfide_length: NamedTuple = BOND_LENGTHS(3.0, 5.0)
         self.graph = nx.Graph()
         self.residues = [x for x in self.chain.get_residues() \
                     if x.get_resname() != "NH2" and x.get_resname() != "HOH"]
@@ -117,33 +121,80 @@ class Peptide(object):
         # such that we do not include bonds that are too short to be realistic
         # or exist
         
+        # I need to think about how to identify the places a cycle can occur, rather than
+        # blindly adding them
+        # 1. 1st and last amino acid
+        # 2. 1st/last and some amino acid in the middle 
+        # 3. Two amino acid in the middle (Apart of CYS, two similar canonical amino acids can only link together through a peptide bond)
+        
+        print(len(self.residues))
+        
         try:
             for res_one, res_two in combinations(self.residues, 2):
                 
-                if res_one.get_resname().upper() == "CYS" and res_two.get_resname().upper() == "CYS":
-                    sulphur_coords_one: List = [atom for atom in res_one.get_atoms() if atom.get_name() == 'SG'][0]
-                    sulphur_coords_two: List = [atom for atom in res_two.get_atoms() if atom.get_name() == 'SG'][0]
+                sulphur_coords_one: List = [atom for atom in res_one.get_atoms() if atom.get_name() == 'SG']
+                sulphur_coords_two: List = [atom for atom in res_two.get_atoms() if atom.get_name() == 'SG']
+                
+                if (res_one.id[1] == 1 or res_two.id[1] == 1) and (res_one.id[1] == len(self.residues) or res_two.id[1] == len(self.residues)): # first and last amino acid
+                    self._add_edges(res_one, res_two)
                     
-                    distance: float = np.linalg.norm(sulphur_coords_one - sulphur_coords_two)
+                elif res_one.id[1] == 1 and res_two.id[1] != len(self.residues): # first amino acid and any other amino acid except the last
+                    # both of them should be different, except they are cysteines or sulphur containing amino acids
+                    self._add_edges(res_one, res_two)
+                
+                elif res_two.id[1] == 1 and res_one.id[1] != len(self.residues): # first amino acid and any other amino acid except the last
+                    self._add_edges(res_one, res_two)
+                
+                elif res_one.id[1] == len(self.residues) and res_two.id[1] != 1: # last amino acid and any other amino acid except the last
+                    # both of them should be different, except they are cysteines or sulphur containing amino acids
+                    self._add_edges(res_one, res_two)
+                          
+                elif res_two.id[1] == len(self.residues) and res_one.id[1] != 1: # last amino acid and any other amino acid except the last
+                    # both of them should be different, except they are cysteines or sulphur containing amino acids
+                    self._add_edges(res_one, res_two)
+                    
+                elif sulphur_coords_one and sulphur_coords_two: # check all sulfur containing amino acids
+                    self._add_edges(res_one, res_two)
+                
+                else: # neither the first nor last amino acid
+                    
+                    if res_one.id[1] in (res_two.id[1]-1, res_two.id[1]+1) or res_two.id[1] in (res_one.id[1]-1, res_one.id[1]+1):
+                        # sequential amino acids
+                        self._add_edges(res_one, res_two)
+                    elif res_one.get_resname() != res_two.get_resname():
+                        self._add_edges(res_one, res_two)
 
-                    if distance >= self.disulfide_length[0] and distance <= self.disulfide_length[1]:
-                        self.graph.add_nodes_from([res_one, res_two])
-                        self.graph.add_weighted_edges_from([(res_one, res_two, distance), (res_two, res_one, distance)])
-                else:   
-                    ca_coords_one: np.ndarray = [atom for atom in res_one.get_atoms() if atom.get_name() == 'CA'][0]
-                    ca_coords_two: np.ndarray = [atom for atom in res_two.get_atoms() if atom.get_name() == 'CA'][0]
                     
-                    distance: float = np.linalg.norm(ca_coords_one - ca_coords_two)
-                    
-                    if distance >= self.peptide_length[0] and distance <= self.peptide_length[1]:
-                        self.graph.add_nodes_from([res_one, res_two])
-                        self.graph.add_weighted_edges_from([(res_one, res_two, distance), (res_two, res_one, distance)])
-        except Exception as e:
+        except IndexError as e:
             return f"Error message: {e.__repr__()}"
                 
     def get_graph(self) -> nx.Graph:
         return self.graph
-                   
+        
+    def _add_edges(self, residue_one, residue_two) -> None:
+        
+        coordinates_one = [atom for atom in residue_one.get_atoms() if atom.get_name() == 'CA'][0]
+        coordinates_two = [atom for atom in residue_two.get_atoms() if atom.get_name() == 'CA'][0]
+        
+        sulphur_coords_one: List = [atom for atom in residue_one.get_atoms() if atom.get_name() == 'SG']
+        sulphur_coords_two: List = [atom for atom in residue_two.get_atoms() if atom.get_name() == 'SG']
+                        
+        distance: float = np.linalg.norm(coordinates_one - coordinates_two)
+                        
+        if distance >= self.peptide_length.min and distance <= self.peptide_length.max:
+            node_one_name, node_two_name = f"{residue_one.get_resname()}_{residue_one.id[1]}", f"{residue_two.get_resname()}_{residue_two.id[1]}"
+            self.graph.add_nodes_from([node_one_name, node_two_name])
+            self.graph.add_weighted_edges_from([(node_one_name, node_two_name, distance), (node_one_name, node_two_name, distance)])
+        
+        if sulphur_coords_one and sulphur_coords_two: # Checks the presence of disulfide bonds if SG is present in AA
+            # Needs some refining because two methionines cannot form a disulfide bond
+            distance: float = np.linalg.norm(sulphur_coords_one[0] - sulphur_coords_two[0])
+
+            if distance >= self.disulfide_length.min and distance <= self.disulfide_length.max:
+                node_one_name, node_two_name = f"{residue_one.get_resname()}_{residue_one.id[1]}", f"{residue_two.get_resname()}_{residue_two.id[1]}"
+                self.graph.add_nodes_from([node_one_name, node_two_name])
+                self.graph.add_weighted_edges_from([(node_one_name, node_two_name, distance), (node_one_name, node_two_name, distance)])
+                               
     def is_cyclic(self, source: str = None, orientation: str = None) -> bool:
         """ Determines if a peptide is cyclic or not"""
         
