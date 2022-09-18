@@ -1,2 +1,9 @@
 1. coulombic energy
 2. disulfide bond
+3. Types of cyclizations
+    i. N-to-C
+    ii. disulfide
+    iii. Side chain amine to Carboxylic Side Chain
+    iv. Carboxylic side chain to Terminal amine
+    v. Terminal Carboxyl group to Side Chain amine
+4. sasa

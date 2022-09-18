@@ -1,3 +1,5 @@
 /env
 /data
 /descriptors/coulomb.py
+/graphs
+/descriptors/__pycache__

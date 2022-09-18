@@ -1,22 +1,63 @@
 # app.py
 
 import os
+import tempfile
+import urllib
 from typing import List
 
+import networkx as nx
+import matplotlib.pyplot as plt
+
 from Bio.PDB import PDBParser
+from descriptors.peptide import Peptide
 
 def load_structure(filename: str):
-    complex = parser.get_structure("XXX", filename)
-    peptide_chain: List = [chain for chain in complex.get_chains() if len(list(chain.get_residues())) < 51][0]
-    
-    return peptide_chain
+    try:
+        complex = parser.get_structure("XXX", filename)
+        peptide_chain: List = [chain for chain in complex.get_chains() if len(list(chain.get_residues())) < 51][0]
+        
+        return peptide_chain
+    except Exception as e:
+        pass
 
 
 
 parser: PDBParser = PDBParser(PERMISSIVE=1)
 
 if __name__ == '__main__':
-    path: str = os.path.join(os.getcwd(), "data/2c9t.pdb")
-    pep_chain = load_structure(path)
-    
-    print(pep_chain, type(pep_chain))
+    with open(os.path.join(os.getcwd(), "data/pdbs.txt"), 'r') as lines:
+        for line in lines:
+            pdb = line.strip("\n").strip()
+            file_name: str
+            
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                url: str = f"https://files.rcsb.org/download/{pdb}.pdb"
+                urllib.request.urlretrieve(url, tmp.name)
+                file_name = tmp.name
+                
+            pep_chain = load_structure(file_name)
+            if pep_chain:
+                peptide = Peptide(chain=pep_chain)
+                
+                print(peptide.get_sequence())
+                    # print(peptide.get_one_letter_sequence())
+                    # print(peptide.get_num_canonical_non_canonical())
+                    # print(peptide.get_dihedral_angles())
+                    # print(peptide.get_tau_angles())
+                    # print(peptide.get_theta_angles())
+                    
+                if peptide.is_cyclic():
+                    print(peptide.get_cycle_members())
+                        
+                        # print(peptide.get_mass())
+                        # print(peptide.isoelectric_point())
+                        # print(peptide.hydrophobicity())
+                        # print(peptide.boman())
+                        # print(peptide.charge())
+                        # print(peptide.aliphatic_index())
+                        
+                    graph = peptide.get_graph()
+                    nx.draw(graph)
+                    plt.savefig(os.path.join(os.getcwd(), f"graphs/{peptide.is_cyclic()}_{pdb}.png"))
+                    plt.clf()
+                    os.remove(file_name)
