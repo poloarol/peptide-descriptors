@@ -10,7 +10,7 @@ Provides methods to obtain peptide descriptors.
 
 from typing import List, Dict, NamedTuple
 from collections import namedtuple
-from itertools import combinations
+from itertools import combinations, product
 
 import numpy as np
 import networkx as nx
@@ -38,8 +38,8 @@ class Peptide(object):
     
     def __init__(self, chain: Chain):
         self.chain: Chain = chain
-        self.peptide_length: NamedTuple = BOND_LENGTHS(2.0, 4.0) # bond lengths should be ammended
-        self.disulfide_length: NamedTuple = BOND_LENGTHS(3.0, 5.0)
+        self.peptide_length: NamedTuple = BOND_LENGTHS(2.9, 3.799) # bond lengths should be ammended
+        self.disulfide_length: NamedTuple = BOND_LENGTHS(1.9, 2.05)
         self.graph = nx.Graph()
         self.residues = [x for x in self.chain.get_residues() \
                     if x.get_resname() != "NH2" and x.get_resname() != "HOH"]
@@ -126,9 +126,7 @@ class Peptide(object):
         # 1. 1st and last amino acid
         # 2. 1st/last and some amino acid in the middle 
         # 3. Two amino acid in the middle (Apart of CYS, two similar canonical amino acids can only link together through a peptide bond)
-        
-        print(len(self.residues))
-        
+                
         try:
             for res_one, res_two in combinations(self.residues, 2):
                 
@@ -153,7 +151,7 @@ class Peptide(object):
                     # both of them should be different, except they are cysteines or sulphur containing amino acids
                     self._add_edges(res_one, res_two)
                     
-                elif sulphur_coords_one and sulphur_coords_two: # check all sulfur containing amino acids
+                elif sulphur_coords_one and sulphur_coords_two and res_one.get_resname().upper() != "MET" or res_two.get_resname().upper() != "MET": # check all sulfur containing amino acids
                     self._add_edges(res_one, res_two)
                 
                 else: # neither the first nor last amino acid
@@ -173,27 +171,28 @@ class Peptide(object):
         
     def _add_edges(self, residue_one, residue_two) -> None:
         
-        coordinates_one = [atom for atom in residue_one.get_atoms() if atom.get_name() == 'CA'][0]
-        coordinates_two = [atom for atom in residue_two.get_atoms() if atom.get_name() == 'CA'][0]
+        coordinates_one = [atom for atom in residue_one.get_atoms() if "C" in atom.get_name()]
+        coordinates_two = [atom for atom in residue_two.get_atoms() if "C" in atom.get_name()]
         
         sulphur_coords_one: List = [atom for atom in residue_one.get_atoms() if atom.get_name() == 'SG']
         sulphur_coords_two: List = [atom for atom in residue_two.get_atoms() if atom.get_name() == 'SG']
-                        
-        distance: float = np.linalg.norm(coordinates_one - coordinates_two)
-                        
-        if distance >= self.peptide_length.min and distance <= self.peptide_length.max:
-            node_one_name, node_two_name = f"{residue_one.get_resname()}_{residue_one.id[1]}", f"{residue_two.get_resname()}_{residue_two.id[1]}"
-            self.graph.add_nodes_from([node_one_name, node_two_name])
-            self.graph.add_weighted_edges_from([(node_one_name, node_two_name, distance), (node_one_name, node_two_name, distance)])
         
-        if sulphur_coords_one and sulphur_coords_two: # Checks the presence of disulfide bonds if SG is present in AA
-            # Needs some refining because two methionines cannot form a disulfide bond
-            distance: float = np.linalg.norm(sulphur_coords_one[0] - sulphur_coords_two[0])
+        for carbon_one, carbon_two in product(coordinates_one, coordinates_two):
+            distance: float = np.linalg.norm(carbon_one - carbon_two)
 
-            if distance >= self.disulfide_length.min and distance <= self.disulfide_length.max:
+            if distance >= self.peptide_length.min and distance <= self.peptide_length.max:
                 node_one_name, node_two_name = f"{residue_one.get_resname()}_{residue_one.id[1]}", f"{residue_two.get_resname()}_{residue_two.id[1]}"
                 self.graph.add_nodes_from([node_one_name, node_two_name])
-                self.graph.add_weighted_edges_from([(node_one_name, node_two_name, distance), (node_one_name, node_two_name, distance)])
+                self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 3), (node_one_name, node_two_name, 3)])
+        
+            if sulphur_coords_one and sulphur_coords_two: # Checks the presence of disulfide bonds if SG is present in AA
+                # Needs some refining because two methionines cannot form a disulfide bond
+                distance: float = round(np.linalg.norm(sulphur_coords_one[0] - sulphur_coords_two[0]), 3)
+
+                if distance >= self.disulfide_length.min and distance <= self.disulfide_length.max:
+                    node_one_name, node_two_name = f"{residue_one.get_resname()}_{residue_one.id[1]}", f"{residue_two.get_resname()}_{residue_two.id[1]}"
+                    self.graph.add_nodes_from([node_one_name, node_two_name])
+                    self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 2), (node_one_name, node_two_name, 2)])
                                
     def is_cyclic(self, source: str = None, orientation: str = None) -> bool:
         """ Determines if a peptide is cyclic or not"""

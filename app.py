@@ -1,5 +1,6 @@
 # app.py
 
+from fileinput import filename
 import os
 import tempfile
 import urllib
@@ -35,36 +36,18 @@ if __name__ == '__main__':
                 urllib.request.urlretrieve(url, tmp.name)
                 file_name = tmp.name
                 
-            pep_chains = load_structure(file_name)
-            for i, chain in enumerate(pep_chains):
-                if pdb == "4MQ9":
-                    print(chain)
-                if len(list(chain.get_residues())) > 3:
-                    peptide = Peptide(chain=chain)
-                    graph = peptide.get_graph()
-                    
-                    print(peptide.get_sequence())
-                        # print(peptide.get_one_letter_sequence())
-                        # print(peptide.get_num_canonical_non_canonical())
-                        # print(peptide.get_dihedral_angles())
-                        # print(peptide.get_tau_angles())
-                        # print(peptide.get_theta_angles())
-                        
-                    if peptide.is_cyclic():
-                        print(peptide.get_cycle_members())
-                            
-                            # print(peptide.get_mass())
-                            # print(peptide.isoelectric_point())
-                            # print(peptide.hydrophobicity())
-                            # print(peptide.boman())
-                            # print(peptide.charge())
-                            # print(peptide.aliphatic_index())
-                            
-                        nx.draw(graph, with_labels=True)
-                        plt.savefig(os.path.join(os.getcwd(), f"graphs/cycle/{pdb}_{i}.png"))
-                        plt.clf()
-                    else:
-                        nx.draw(graph, with_labels=True)
-                        plt.savefig(os.path.join(os.getcwd(), f"graphs/no_cycle/{pdb}_{i}.png"))
-                        plt.clf()
+            chains: List = load_structure(filename=file_name)
+            for i, chain in enumerate(chains):
+                peptide: Peptide = Peptide(chain=chain)
+                print(pdb, peptide.is_cyclic())
+                graph = peptide.get_graph()
+                
+                if peptide.is_cyclic():
+                    nx.draw(graph, with_labels=True)
+                    plt.savefig(os.path.join(os.getcwd(), f"graphs/cycle/{pdb}_{i}.png"))
+                    plt.clf()
+                else:
+                    nx.draw(graph, with_labels=True)
+                    plt.savefig(os.path.join(os.getcwd(), f"graphs/no_cycle/{pdb}_{i}.png"))
+                    plt.clf()
             os.remove(file_name)
