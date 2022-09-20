@@ -25,6 +25,7 @@ aa_code: Dict[str, str] = {'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS'
                             'GLY': 'G', 'HIS': 'H', 'LEU': 'L', 'ARG': 'R', 'TRP': 'W', 
                             'ALA': 'A', 'VAL':'V', 'GLU': 'E', 'TYR': 'Y', 'MET': 'M'}
 
+non_bonding_side_chains: List[str] = ["GLY", "SER", "LEU", "ILE", "HIS", "MET", "TYR", "ALA", "VAL", "PHE", "TRP", "PRO"]
 
 BOND_LENGTHS: NamedTuple = namedtuple('BondLengths', 'min max')
 
@@ -38,7 +39,7 @@ class Peptide(object):
     
     def __init__(self, chain: Chain):
         self.chain: Chain = chain
-        self.peptide_length: NamedTuple = BOND_LENGTHS(2.9, 3.799) # bond lengths should be ammended
+        self.peptide_length: NamedTuple = BOND_LENGTHS(2.9, 4.1) # bond lengths should be ammended
         self.disulfide_length: NamedTuple = BOND_LENGTHS(1.9, 2.05)
         self.graph = nx.Graph()
         self.residues = [x for x in self.chain.get_residues() \
@@ -169,30 +170,68 @@ class Peptide(object):
     def get_graph(self) -> nx.Graph:
         return self.graph
         
+    def _check_disulfide_bond(self, coordinates_one: np.array, coordinates_two: np.array) -> bool:
+        distance: float = np.linalg.norm(coordinates_one - coordinates_two)
+        return distance >= self.disulfide_length.min and distance <= self.disulfide_length.max
+    
+    def _check_peptide_bond(self, coordinates_one: np.array, coordinates_two: np.array) -> bool:
+        distance: float = np.linalg.norm(coordinates_one - coordinates_two)
+        return distance >= self.peptide_length.min and distance <= self.peptide_length.max
+    
+    def _theta(self, v: np.array, w: np.array) -> float:
+        return np.arccos(v.dot(w)/(np.linalg.norm(v)*np.linalg.norm(w)))
+    
+    def _add_edge(self, residue_one, residue_two, bond_type: str = "peptide") -> None:
+        node_one_name, node_two_name = f"{residue_one.get_resname()}_{residue_one.id[1]}", f"{residue_two.get_resname()}_{residue_two.id[1]}"
+        if bond_type == "peptide":
+            self.graph.add_nodes_from([node_one_name, node_two_name])
+            self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 3), (node_one_name, node_two_name, 3)])
+        elif bond_type == "disulfide":
+            self.graph.add_nodes_from([node_one_name, node_two_name])
+            self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 2), (node_one_name, node_two_name, 2)])
+    
     def _add_edges(self, residue_one, residue_two) -> None:
         
-        coordinates_one = [atom for atom in residue_one.get_atoms() if "C" in atom.get_name()]
-        coordinates_two = [atom for atom in residue_two.get_atoms() if "C" in atom.get_name()]
+        distance: float
+        bond_angle: float
         
-        sulphur_coords_one: List = [atom for atom in residue_one.get_atoms() if atom.get_name() == 'SG']
-        sulphur_coords_two: List = [atom for atom in residue_two.get_atoms() if atom.get_name() == 'SG']
+        sulfur_coords_one: List = [np.array(atom.get_coord()) for atom in residue_one.get_atoms() if atom.get_name() == 'SG']
+        sulfur_coords_two: List = [np.array(atom.get_coord()) for atom in residue_two.get_atoms() if atom.get_name() == 'SG']
         
-        for carbon_one, carbon_two in product(coordinates_one, coordinates_two):
-            distance: float = np.linalg.norm(carbon_one - carbon_two)
+        # add nodes with tag to make sure that they can be searched
+        # this would make sure that we don't get crazy amounts of bonds
+        
+        if residue_one.get_resname().upper() in non_bonding_side_chains or \
+            residue_two.get_resname().upper() in non_bonding_side_chains:
+            
+            coordinates_one = [np.array(atom.get_coord()) for atom in residue_one.get_atoms() if atom.get_name() == "CA"]
+            coordinates_two = [np.array(atom.get_coord()) for atom in residue_two.get_atoms() if atom.get_name() == "CA"]
+            
+            distance = np.linalg.norm(coordinates_one[0] - coordinates_two[0])
+            bond_angle = self._theta(coordinates_one[0], coordinates_two[0])
+            
+            if (distance >= self.peptide_length.min and distance <= self.peptide_length.max) and ((-0.1 <= bond_angle <= 0.1) or (179.9 <= bond_angle <= 180.9)):
+                self._add_edge(residue_one, residue_two)
+        else:
+            
+            coordinates_one = [np.array(atom.get_coord()) for atom in residue_one.get_atoms() if "C" in atom.get_name()]
+            coordinates_two = [np.array(atom.get_coord()) for atom in residue_two.get_atoms() if "C" in atom.get_name()]
+            
+            for carbon_one, carbon_two in product(coordinates_one, coordinates_two):
+                distance = np.linalg.norm(carbon_one - carbon_two)
+                bond_angle = self._theta(carbon_one, carbon_two)
+                
+                if (distance >= self.peptide_length.min and distance <= self.peptide_length.max) and ((-0.1 <= bond_angle <= 0.1) or (179.9 <= bond_angle <= 180.9)):
+                    self._add_edge(residue_one, residue_two)
+            
+        for sulfur_one, sulfur_two in product(sulfur_coords_one, sulfur_coords_two):
+            # Checks the presence of disulfide bonds if SG is present in AA
+            # Needs some refining because two methionines cannot form a disulfide bond
+            distance = np.linalg.norm(sulfur_one - sulfur_two)
+            bond_angle = self._theta(sulfur_one, sulfur_two)
 
-            if distance >= self.peptide_length.min and distance <= self.peptide_length.max:
-                node_one_name, node_two_name = f"{residue_one.get_resname()}_{residue_one.id[1]}", f"{residue_two.get_resname()}_{residue_two.id[1]}"
-                self.graph.add_nodes_from([node_one_name, node_two_name])
-                self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 3), (node_one_name, node_two_name, 3)])
-        
-            if sulphur_coords_one and sulphur_coords_two: # Checks the presence of disulfide bonds if SG is present in AA
-                # Needs some refining because two methionines cannot form a disulfide bond
-                distance: float = round(np.linalg.norm(sulphur_coords_one[0] - sulphur_coords_two[0]), 3)
-
-                if distance >= self.disulfide_length.min and distance <= self.disulfide_length.max:
-                    node_one_name, node_two_name = f"{residue_one.get_resname()}_{residue_one.id[1]}", f"{residue_two.get_resname()}_{residue_two.id[1]}"
-                    self.graph.add_nodes_from([node_one_name, node_two_name])
-                    self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 2), (node_one_name, node_two_name, 2)])
+            if (distance >= self.disulfide_length.min and distance <= self.disulfide_length.max) and (179.9 <= bond_angle <= 180.9):
+                self._add_edge(residue_one, residue_two, bond_type="disulfide")
                                
     def is_cyclic(self, source: str = None, orientation: str = None) -> bool:
         """ Determines if a peptide is cyclic or not"""
