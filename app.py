@@ -1,6 +1,5 @@
 # app.py
 
-from fileinput import filename
 import os
 import tempfile
 import urllib
@@ -39,7 +38,7 @@ if __name__ == '__main__':
             chains: List = load_structure(filename=file_name)
             for i, chain in enumerate(chains):
                 peptide: Peptide = Peptide(chain=chain)
-                print(pdb, peptide.is_cyclic())
+                print(pdb, peptide.is_cyclic(), peptide.get_sequence())
                 graph = peptide.get_graph()
                 
                 if peptide.is_cyclic():

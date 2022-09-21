@@ -18,6 +18,7 @@ import networkx as nx
 from peptides import Peptide as PTDS
 from Bio.PDB import PPBuilder
 from Bio.PDB.Chain import Chain
+from Bio.PDB.Residue import Residue
 from Bio.PDB.QCPSuperimposer import QCPSuperimposer
 
 aa_code: Dict[str, str] = {'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS': 'K',
@@ -29,18 +30,84 @@ non_bonding_side_chains: List[str] = ["GLY", "SER", "LEU", "ILE", "HIS", "MET", 
 
 BOND_LENGTHS: NamedTuple = namedtuple('BondLengths', 'min max')
 
+class Residue(object):
+    """ 
+    Residue (class)
+    ---------------
+    Provides accessory methods to allow for the 
+    addition of bonds between amino acid residues.
+    
+    params
+    ------
+    name(str): Name of the residue
+    residue(Residue): Residue descriptor as provided by Biopython
+    num_peptide_bonds (int): Number of peptide bonds formed
+    num_disulfide_bonds (int): Number of disulfide bonds formed
+    disulfide (bool): Determines if disulfide bonds can be formed
+    acidic_side_chain (bool): Determines if the side chain is acidic
+    basic_side_chain (bool): Determines if the side chain is basic
+    
+    """
+    
+    def __init__(self, name: str, residue: Residue):
+        self.name: str = name
+        self.residue: Residue = residue
+        self.num_peptide_bonds: int = 0
+        self.num_disulfide_bonds: int = 0
+        self.disulfide: bool = False
+        self.acidic_side_chain: bool = False
+        self.basic_side_chain: bool = False
+        
+    def _get_side_chain_atoms(self):
+        backbone_atoms: List = ('CA', 'C1', 'HA', 'N', 'HN', 'H', 'C', 'O', 'H1', 'H2', 'H3', 'NH1', 'NH2', 'NH3', 'OXT')
+        side_chain_atoms: List[str] = [atom.get_name() for atom in self.residue.get_atoms() if atom.get_name() not in (backbone_atoms)]
+        return side_chain_atoms
+        
+    def _has_thiol_side_chain(self) -> bool:
+        side_chain_atoms: List[str] = self._get_side_chain_atoms()
+        return [element for element in side_chain_atoms if element == "SG"]
+
+    def _has_basic_side_chain(self) -> bool:
+        side_chain_atoms: List[str] = self._get_side_chain_atoms()
+        return [element for element in side_chain_atoms if element.startswith("N")]
+    
+    def _has_acidic_side_chain(self) -> bool:
+        side_chain_atoms: List[str] = self._get_side_chain_atoms()
+        return [element for element in side_chain_atoms if element.startswith("O")]
+    
+    def form_peptide_bond(self) -> bool:
+        if self.acidic_side_chain or self.basic_side_chain:
+            return True if self.num_peptide_bonds < 4 else False
+        else:
+            return True if self.num_peptide_bonds < 3 else False
+    
+    def form_disulfide_bond(self) -> bool:
+        if self.disulfide:
+            return True if self.num_disulfide_bonds < 1 else False
+        return False
+                
+                 
+                 
 class Peptide(object):
     """
-    class Peptide
+    Peptide (class)
+    ---------------
+    Provides methods to model peptides and methods 
+    to obtain physico-chemical properties.
         
-    Args:
+    params:
+    chain (Chain): Chain than references peptide sequence
+    residues (List): List of residues in the chain
+    peptide_length (namedtuple): Min-Max bond length
+    disulfide_length (namedtuple): Min-Max bond length
+    graph (nx.Graph): Undirected graph
         
     """
     
     def __init__(self, chain: Chain):
         self.chain: Chain = chain
-        self.peptide_length: NamedTuple = BOND_LENGTHS(2.9, 4.1) # bond lengths should be ammended
-        self.disulfide_length: NamedTuple = BOND_LENGTHS(1.9, 2.05)
+        self.peptide_length: NamedTuple = BOND_LENGTHS(2.899, 4.5) # bond lengths should be ammended
+        self.disulfide_length: NamedTuple = BOND_LENGTHS(1.999, 2.05)
         self.graph = nx.Graph()
         self.residues = [x for x in self.chain.get_residues() \
                     if x.get_resname() != "NH2" and x.get_resname() != "HOH"]
@@ -78,8 +145,6 @@ class Peptide(object):
         return sequence.count("X")
     
     def get_num_canonical_non_canonical(self) -> Dict[str, int]:
-        sequence: str = self.get_one_letter_sequence()
-        
         return {"canonical": self._get_num_canonicals(), "non_canonical": self._get_num_non_canonicals()}
     
     def _get_polypeptide(self) -> PPBuilder:
@@ -90,7 +155,7 @@ class Peptide(object):
         dihedrals: List = []
         polypeptide: PPBuilder = self._get_polypeptide()
         
-        for _, peptide in enumerate(polypeptide):
+        for _ , peptide in enumerate(polypeptide):
             dihedrals.append(peptide.get_phi_psi_list())
             
         return dihedrals
@@ -101,7 +166,7 @@ class Peptide(object):
         tau_angles: List = []
         polypeptide: PPBuilder = self._get_polypeptide()
         
-        for _, peptide in enumerate(polypeptide):
+        for _ , peptide in enumerate(polypeptide):
             tau_angles.append(peptide.get_tau_list())
         
         return tau_angles
@@ -112,10 +177,16 @@ class Peptide(object):
         theta_angles: List = []
         polypeptide: PPBuilder = self._get_polypeptide()
         
-        for _, peptide in enumerate(polypeptide):
+        for _ , peptide in enumerate(polypeptide):
             theta_angles.append(peptide.get_theta_list())
         
         return theta_angles
+    
+    def _get_side_chain_atoms(self, residue):
+        backbone_atoms: List = ('CA', 'C1', 'HA', 'N', 'HN', 'H', 'C', 'O', 'H1', 'H2', 'H3', 'NH1', 'NH2', 'NH3', 'OXT')
+        side_chain_atoms: List[str] = [atom.get_name() for atom in residue.get_atoms() if atom.get_name() not in (backbone_atoms)]
+        
+        return side_chain_atoms
            
     def _build_graph(self) -> None:
         # It would be better to obtain statistics about bond lenghts,
@@ -131,38 +202,70 @@ class Peptide(object):
         try:
             for res_one, res_two in combinations(self.residues, 2):
                 
-                sulphur_coords_one: List = [atom for atom in res_one.get_atoms() if atom.get_name() == 'SG']
-                sulphur_coords_two: List = [atom for atom in res_two.get_atoms() if atom.get_name() == 'SG']
+                side_chain_one, side_chain_two = self._get_side_chain_atoms(res_one), self._get_side_chain_atoms(res_two)
+                basic_side_chain_one, basic_side_chain_two = [i for i in side_chain_one if i.startswith('N')], [i for i in side_chain_two if i.startswith('N')]
+                acidic_side_chain_one, acidic_side_chain_two = [i for i in side_chain_one if i.startswith('O')], [i for i in side_chain_two if i.startswith('0')]
                 
-                if (res_one.id[1] == 1 or res_two.id[1] == 1) and (res_one.id[1] == len(self.residues) or res_two.id[1] == len(self.residues)): # first and last amino acid
+                acid_base_pair_one: bool = True if basic_side_chain_one and acidic_side_chain_two else False
+                acid_base_pair_two: bool = True if basic_side_chain_two and acidic_side_chain_one else False
+                                
+                first_residue_idx, last_residue_idx = self.residues[0].id[1], self.residues[-1].id[1]
+                
+                if (res_one.id[1] == first_residue_idx or res_two.id[1] == first_residue_idx) \
+                    and (res_one.id[1] == last_residue_idx or res_two.id[1] == last_residue_idx): # first and last amino acid
                     self._add_edges(res_one, res_two)
                     
-                elif res_one.id[1] == 1 and res_two.id[1] != len(self.residues): # first amino acid and any other amino acid except the last
+                elif (res_one.id[1] == first_residue_idx) and (res_two.id[1] != last_residue_idx) \
+                    and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)) and (res_one.get_resname().upper() != res_two.get_resname().upper()): 
+                    # first amino acid and any other amino acid except the last
                     # both of them should be different, except they are cysteines or sulphur containing amino acids
-                    self._add_edges(res_one, res_two)
-                
-                elif res_two.id[1] == 1 and res_one.id[1] != len(self.residues): # first amino acid and any other amino acid except the last
-                    self._add_edges(res_one, res_two)
-                
-                elif res_one.id[1] == len(self.residues) and res_two.id[1] != 1: # last amino acid and any other amino acid except the last
-                    # both of them should be different, except they are cysteines or sulphur containing amino acids
-                    self._add_edges(res_one, res_two)
-                          
-                elif res_two.id[1] == len(self.residues) and res_one.id[1] != 1: # last amino acid and any other amino acid except the last
-                    # both of them should be different, except they are cysteines or sulphur containing amino acids
-                    self._add_edges(res_one, res_two)
                     
-                elif sulphur_coords_one and sulphur_coords_two and res_one.get_resname().upper() != "MET" or res_two.get_resname().upper() != "MET": # check all sulfur containing amino acids
-                    self._add_edges(res_one, res_two)
+                    if acid_base_pair_one:
+                        self._add_edges(res_one, res_two)
+                        
+                    if acid_base_pair_two:
+                        self._add_edges(res_one, res_two)
+                
+                elif (res_two.id[1] == first_residue_idx) and (res_one.id[1] != last_residue_idx) \
+                    and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)) and (res_one.get_resname().upper() != res_two.get_resname().upper()):
+                    if acid_base_pair_one:
+                        self._add_edges(res_one, res_two)
+                        
+                    if acid_base_pair_two:
+                        self._add_edges(res_one, res_two)
+                
+                elif (res_one.id[1] == last_residue_idx) and (res_two.id[1] != first_residue_idx) \
+                    and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)) and (res_one.get_resname().upper() != res_two.get_resname().upper()):
+                    # and (res_one.get_resname().upper() != res_two.get_resname().upper()): # last amino acid and any other amino acid except the last
+                    # both of them should be different, except they are cysteines or sulphur containing amino acids
+                    if acid_base_pair_one:
+                        self._add_edges(res_one, res_two)
+                        
+                    if acid_base_pair_two:
+                        self._add_edges(res_one, res_two)
+                
+                elif (res_two.id[1] == last_residue_idx) and (res_one.id[1] != first_residue_idx) \
+                    and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)) and (res_one.get_resname().upper() != res_two.get_resname().upper()):
+                    if acid_base_pair_one:
+                        self._add_edges(res_one, res_two)
+                        
+                    if acid_base_pair_two:
+                        self._add_edges(res_one, res_two)
                 
                 else: # neither the first nor last amino acid
                     
                     if res_one.id[1] in (res_two.id[1]-1, res_two.id[1]+1) or res_two.id[1] in (res_one.id[1]-1, res_one.id[1]+1):
                         # sequential amino acids
                         self._add_edges(res_one, res_two)
-                    elif res_one.get_resname() != res_two.get_resname():
-                        self._add_edges(res_one, res_two)
+                    elif res_one.get_resname().upper() != res_two.get_resname().upper():
+                        if acid_base_pair_one:
+                            self._add_edges(res_one, res_two)
+                        
+                        if acid_base_pair_two:
+                            self._add_edges(res_one, res_two)
 
+                if res_one.get_resname().upper() == "CYS" and res_two.get_resname().upper() == "CYS":
+                    self._add_edges(res_one, res_two)
                     
         except IndexError as e:
             return f"Error message: {e.__repr__()}"
@@ -185,7 +288,7 @@ class Peptide(object):
         node_one_name, node_two_name = f"{residue_one.get_resname()}_{residue_one.id[1]}", f"{residue_two.get_resname()}_{residue_two.id[1]}"
         if bond_type == "peptide":
             self.graph.add_nodes_from([node_one_name, node_two_name])
-            self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 3), (node_one_name, node_two_name, 3)])
+            self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 4), (node_one_name, node_two_name, 4)])
         elif bond_type == "disulfide":
             self.graph.add_nodes_from([node_one_name, node_two_name])
             self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 2), (node_one_name, node_two_name, 2)])
@@ -198,18 +301,17 @@ class Peptide(object):
         sulfur_coords_one: List = [np.array(atom.get_coord()) for atom in residue_one.get_atoms() if atom.get_name() == 'SG']
         sulfur_coords_two: List = [np.array(atom.get_coord()) for atom in residue_two.get_atoms() if atom.get_name() == 'SG']
         
-        # add nodes with tag to make sure that they can be searched
-        # this would make sure that we don't get crazy amounts of bonds
+        # # add nodes with tag to make sure that they can be searched
+        # # this would make sure that we don't get crazy amounts of bonds
         
-        if residue_one.get_resname().upper() in non_bonding_side_chains or \
-            residue_two.get_resname().upper() in non_bonding_side_chains:
-            
-            coordinates_one = [np.array(atom.get_coord()) for atom in residue_one.get_atoms() if atom.get_name() == "CA"]
-            coordinates_two = [np.array(atom.get_coord()) for atom in residue_two.get_atoms() if atom.get_name() == "CA"]
+        if residue_one.get_resname().strip() in non_bonding_side_chains or \
+            residue_two.get_resname().strip() in non_bonding_side_chains:        
+            coordinates_one = [np.array(atom.get_coord()) for atom in residue_one.get_atoms() if atom.get_name() == "CA" or atom.get_name() == "C1"]
+            coordinates_two = [np.array(atom.get_coord()) for atom in residue_two.get_atoms() if atom.get_name() == "CA" or atom.get_name() == "C1"]
             
             distance = np.linalg.norm(coordinates_one[0] - coordinates_two[0])
             bond_angle = self._theta(coordinates_one[0], coordinates_two[0])
-            
+                        
             if (distance >= self.peptide_length.min and distance <= self.peptide_length.max) and ((-0.1 <= bond_angle <= 0.1) or (179.9 <= bond_angle <= 180.9)):
                 self._add_edge(residue_one, residue_two)
         else:
@@ -220,7 +322,7 @@ class Peptide(object):
             for carbon_one, carbon_two in product(coordinates_one, coordinates_two):
                 distance = np.linalg.norm(carbon_one - carbon_two)
                 bond_angle = self._theta(carbon_one, carbon_two)
-                
+                                
                 if (distance >= self.peptide_length.min and distance <= self.peptide_length.max) and ((-0.1 <= bond_angle <= 0.1) or (179.9 <= bond_angle <= 180.9)):
                     self._add_edge(residue_one, residue_two)
             
