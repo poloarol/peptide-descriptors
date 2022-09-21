@@ -8,7 +8,9 @@ Provides methods to obtain peptide descriptors.
     3. frequency of canonicals vs non-canonicals in the sequence
 """
 
-from typing import List, Dict, NamedTuple
+from audioop import add
+from platform import node
+from typing import List, Dict, NamedTuple, Tuple
 from collections import namedtuple
 from itertools import combinations, product
 
@@ -26,11 +28,14 @@ aa_code: Dict[str, str] = {'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS'
                             'GLY': 'G', 'HIS': 'H', 'LEU': 'L', 'ARG': 'R', 'TRP': 'W', 
                             'ALA': 'A', 'VAL':'V', 'GLU': 'E', 'TYR': 'Y', 'MET': 'M'}
 
-non_bonding_side_chains: List[str] = ["GLY", "SER", "LEU", "ILE", "HIS", "MET", "TYR", "ALA", "VAL", "PHE", "TRP", "PRO"]
+basic_aa: Tuple[str] = ("HIS", "ARG", "LYS")
+acidic_aa: Tuple[str] = ("ASP", "GLU")
+non_bonding_side_chains: List[str] = ("GLY", "SER", "LEU", "ILE", "HIS", "MET", "TYR", "ALA", "VAL", "PHE", "TRP", "PRO", "GLN", "ASN")
+backbone_atoms: List = ('CA', 'C1', 'HA', 'N', 'HN', 'H', 'C', 'O', 'H1', 'H2', 'H3', 'NH1', 'NH2', 'NH3', 'OXT')
 
 BOND_LENGTHS: NamedTuple = namedtuple('BondLengths', 'min max')
 
-class Residue(object):
+class ResidueNode(object):
     """ 
     Residue (class)
     ---------------
@@ -58,32 +63,97 @@ class Residue(object):
         self.acidic_side_chain: bool = False
         self.basic_side_chain: bool = False
         
+        self._has_acidic_side_chain()
+        self._has_basic_side_chain()
+    
+    def get_coordinates(self, element_type = "SG") -> List:
+        if element_type == "SG":
+            return [np.array(atom.get_coord()) for atom in self.residue if atom.get_name() == element_type]
+        elif element_type == "CA":
+            return [np.array(atom.get_coord()) for atom in self.residue if atom.get_name() == element_type]
+        else: # All carbon types. More useful for non-canonicals or amino acids which can form peptide bonds with their side chain.
+            return [np.array(atom.get_coord()) for atom in self.residue if atom.get_name().startswith(element_type)]
+        
     def _get_side_chain_atoms(self):
         backbone_atoms: List = ('CA', 'C1', 'HA', 'N', 'HN', 'H', 'C', 'O', 'H1', 'H2', 'H3', 'NH1', 'NH2', 'NH3', 'OXT')
         side_chain_atoms: List[str] = [atom.get_name() for atom in self.residue.get_atoms() if atom.get_name() not in (backbone_atoms)]
         return side_chain_atoms
+    
+    def _detect_moeity(self, moeity: str):
+        side_chain_atoms: List[str] = self._get_side_chain_atoms()
+        return True if [element for element in side_chain_atoms if element.startswith(moeity)] else False
         
     def _has_thiol_side_chain(self) -> bool:
         side_chain_atoms: List[str] = self._get_side_chain_atoms()
-        return [element for element in side_chain_atoms if element == "SG"]
+        return True if [element for element in side_chain_atoms if element == "SG"] else False
+    
+    def can_form_disulfide(self) -> bool:
+        return self._has_thiol_side_chain()
+    
+    def is_acidic(self) -> bool:
+        return self._has_acidic_side_chain()
+    
+    def is_basic(self) -> bool:
+        return self._has_basic_side_chain()
+    
+    def can_form_disulfide_bond(self) -> bool:
+        self.disulfide = self._has_thiol_side_chain()
+        return self.disulfide
+    
+    def can_form_peptide_bond(self) -> bool:
+        if self._has_acidic_side_chain() or self._has_basic_side_chain():
+            return True if self.num_peptide_bonds < 3 else False
+        return True if self.num_peptide_bonds < 2 else False
 
     def _has_basic_side_chain(self) -> bool:
-        side_chain_atoms: List[str] = self._get_side_chain_atoms()
-        return [element for element in side_chain_atoms if element.startswith("N")]
+        if self.residue.get_resname().upper() in basic_aa:
+            self.basic_side_chain = True
+            return self.basic_side_chain
+        elif self.residue.get_resname().upper() in acidic_aa or self.residue.get_resname().upper() in non_bonding_side_chains:
+            return False
+        else:
+            if self._detect_moeity(moeity="N"):
+                self.basic_side_chain = True
+                return self.basic_side_chain
+            return False
     
     def _has_acidic_side_chain(self) -> bool:
-        side_chain_atoms: List[str] = self._get_side_chain_atoms()
-        return [element for element in side_chain_atoms if element.startswith("O")]
+        if self.residue.get_resname().upper() in acidic_aa:
+            self.acidic_side_chain = True
+            return self.acidic_side_chain
+        elif self.residue.get_resname().upper() in basic_aa or self.residue.get_resname().upper() in non_bonding_side_chains:
+            return False
+        else:
+            if self._detect_moeity(moeity="O"):
+                self.acidic_side_chain = True
+            return self.acidic_side_chain
     
+    def _increment_num_peptide_bonds(self) -> None:
+        self.num_peptide_bonds = self.num_peptide_bonds + 1
+    
+    def _increment_num_disulfide_bonds(self) -> None:
+        self.num_disulfide_bonds = self.num_disulfide_bonds + 1
+        
     def form_peptide_bond(self) -> bool:
         if self.acidic_side_chain or self.basic_side_chain:
-            return True if self.num_peptide_bonds < 4 else False
+            if self.num_peptide_bonds < 3:
+                self._increment_num_peptide_bonds()
+                return True
+            else:
+                return False
         else:
-            return True if self.num_peptide_bonds < 3 else False
+            if self.num_peptide_bonds < 2:
+                self._increment_num_peptide_bonds()
+                return True
+            else:
+                return False
     
     def form_disulfide_bond(self) -> bool:
         if self.disulfide:
-            return True if self.num_disulfide_bonds < 1 else False
+            if self.num_disulfide_bonds < 1:
+                self._increment_num_disulfide_bonds()
+                return True
+            return False
         return False
                 
                  
@@ -108,6 +178,7 @@ class Peptide(object):
         self.chain: Chain = chain
         self.peptide_length: NamedTuple = BOND_LENGTHS(2.899, 4.5) # bond lengths should be ammended
         self.disulfide_length: NamedTuple = BOND_LENGTHS(1.999, 2.05)
+        self.ionic_radii_length: NamedTuple = BOND_LENGTHS(0.3, 30)
         self.graph = nx.Graph()
         self.residues = [x for x in self.chain.get_residues() \
                     if x.get_resname() != "NH2" and x.get_resname() != "HOH"]
@@ -183,10 +254,12 @@ class Peptide(object):
         return theta_angles
     
     def _get_side_chain_atoms(self, residue):
-        backbone_atoms: List = ('CA', 'C1', 'HA', 'N', 'HN', 'H', 'C', 'O', 'H1', 'H2', 'H3', 'NH1', 'NH2', 'NH3', 'OXT')
         side_chain_atoms: List[str] = [atom.get_name() for atom in residue.get_atoms() if atom.get_name() not in (backbone_atoms)]
-        
         return side_chain_atoms
+    
+    def _reset_peptide_indices(self) -> None:
+        for i, residue in enumerate(self.residues):
+            residue.id[1] = i
            
     def _build_graph(self) -> None:
         # It would be better to obtain statistics about bond lenghts,
@@ -201,72 +274,78 @@ class Peptide(object):
                 
         try:
             for res_one, res_two in combinations(self.residues, 2):
+                residue_one_node: ResidueNode = None
+                residue_two_node: ResidueNode = None
+                name_one, name_two = res_one.get_resname().upper(), res_two.get_resname().upper()
                 
-                side_chain_one, side_chain_two = self._get_side_chain_atoms(res_one), self._get_side_chain_atoms(res_two)
-                basic_side_chain_one, basic_side_chain_two = [i for i in side_chain_one if i.startswith('N')], [i for i in side_chain_two if i.startswith('N')]
-                acidic_side_chain_one, acidic_side_chain_two = [i for i in side_chain_one if i.startswith('O')], [i for i in side_chain_two if i.startswith('0')]
+                # Before adding every node to the graph
+                # 1. check if disulfide bond can be created between the two nodes
+                # 2. Either create node or not
                 
-                acid_base_pair_one: bool = True if basic_side_chain_one and acidic_side_chain_two else False
-                acid_base_pair_two: bool = True if basic_side_chain_two and acidic_side_chain_one else False
-                                
                 first_residue_idx, last_residue_idx = self.residues[0].id[1], self.residues[-1].id[1]
                 
-                if (res_one.id[1] == first_residue_idx or res_two.id[1] == first_residue_idx) \
-                    and (res_one.id[1] == last_residue_idx or res_two.id[1] == last_residue_idx): # first and last amino acid
-                    self._add_edges(res_one, res_two)
+                res_one_in_graph: bool = self._find_node(attribute="tag", value=f"{name_one}_{res_one.id[1]}")
+                res_two_in_graph: bool = self._find_node(attribute="tag", value=f"{name_two}_{res_two.id[1]}")
+                                
+                if not res_one_in_graph and not res_two_in_graph:
+                    residue_one_node = ResidueNode(name=name_one, residue=res_one)
+                    residue_two_node = ResidueNode(name=name_two, residue=res_two)
                     
-                elif (res_one.id[1] == first_residue_idx) and (res_two.id[1] != last_residue_idx) \
-                    and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)) and (res_one.get_resname().upper() != res_two.get_resname().upper()): 
-                    # first amino acid and any other amino acid except the last
-                    # both of them should be different, except they are cysteines or sulphur containing amino acids
+                elif not res_one_in_graph:
+                    residue_one_node = self._get_node(attribute="tag", value=f"{name_one}_{res_one.id[1]}")
+                    if residue_two_node.is_acidic() or residue_two_node.is_basic():
+                        if residue_two_node.num_peptide_bonds < 3:
+                            residue_one_node = ResidueNode(name=name_one, residue=res_one)
+                    else:
+                        if residue_two_node.num_peptide_bonds < 2: # neutral amino acid
+                            residue_one_node = ResidueNode(name=name_one, residue=res_one)
+                        elif name_one =="CYS" and name_two == "CYS":
+                            residue_one_node = ResidueNode(name=name_one, residue=res_one)
+                elif not res_two_in_graph:
+                    residue_two_node = self._get_node(attribute="tag", value=f"{name_two}_{res_two.id[1]}")
+                    if residue_one_node.is_acidic() or residue_one_node.is_basic():
+                        if residue_one_node.num_peptide_bonds < 3:
+                            residue_two_node = ResidueNode(name=name_two, residue=res_two)
+                    else:
+                        if residue_one_node.num_peptide_bonds < 2:
+                            residue_two_node = ResidueNode(name=name_two, residue=res_two)
+                        elif name_one =="CYS" and name_two == "CYS":
+                            residue_two_node = ResidueNode(name=name_two, residue=res_two)
+                else:
+                    residue_one_node = self._get_node(attribute="tag", value=f"{name_one}_{res_one.id[1]}")
+                    residue_two_node = self._get_node(attribute="tag", value=f"{name_two}_{res_two.id[1]}")
+                    if name_one in acidic_aa and name_two in basic_aa:
+                        self._add_ionic_interaction(residue_one_node, residue_two_node)
+                    elif name_two in basic_aa and name_one in acidic_aa:
+                        self._add_ionic_interaction(residue_one_node, residue_two_node)
+                                                                
+                # MET does not form disulfide bonds
+                if (residue_one_node.can_form_disulfide() and residue_two_node.can_form_disulfide()) and (name_one != "MET" and name_two != "MET"):
+                    self._add_edges(residue_one_node, residue_two_node, edge_type="disulfide")
+                
+                elif(res_one.id[1] == first_residue_idx or res_two.id[1] == first_residue_idx) and (res_one.id[1] == last_residue_idx or res_two.id[1] == last_residue_idx): # First and last residues
+                    self._add_edges(residue_one_node, residue_two_node, edge_type="peptide")
+                
+                elif (res_one.id[1] == first_residue_idx) and (res_two.id[1] != last_residue_idx) and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)): 
+                    self._add_edges(residue_one_node, residue_two_node, edge_type="peptide")
+                
+                elif (res_two.id[1] == first_residue_idx) and (res_one.id[1] != last_residue_idx) and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)):
+                    self._add_edges(residue_one_node, residue_two_node, edge_type="peptide")
+                
+                elif (res_one.id[1] == last_residue_idx) and (res_two.id[1] != first_residue_idx) and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)):
+                    self._add_edges(residue_one_node, residue_two_node, edge_type="peptide")
+                
+                elif (res_two.id[1] == last_residue_idx) and (res_one.id[1] != first_residue_idx) and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)):
+                    self._add_edges(residue_one_node, residue_two_node, edge_type="peptide")  
                     
-                    if acid_base_pair_one:
-                        self._add_edges(res_one, res_two)
-                        
-                    if acid_base_pair_two:
-                        self._add_edges(res_one, res_two)
-                
-                elif (res_two.id[1] == first_residue_idx) and (res_one.id[1] != last_residue_idx) \
-                    and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)) and (res_one.get_resname().upper() != res_two.get_resname().upper()):
-                    if acid_base_pair_one:
-                        self._add_edges(res_one, res_two)
-                        
-                    if acid_base_pair_two:
-                        self._add_edges(res_one, res_two)
-                
-                elif (res_one.id[1] == last_residue_idx) and (res_two.id[1] != first_residue_idx) \
-                    and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)) and (res_one.get_resname().upper() != res_two.get_resname().upper()):
-                    # and (res_one.get_resname().upper() != res_two.get_resname().upper()): # last amino acid and any other amino acid except the last
-                    # both of them should be different, except they are cysteines or sulphur containing amino acids
-                    if acid_base_pair_one:
-                        self._add_edges(res_one, res_two)
-                        
-                    if acid_base_pair_two:
-                        self._add_edges(res_one, res_two)
-                
-                elif (res_two.id[1] == last_residue_idx) and (res_one.id[1] != first_residue_idx) \
-                    and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)) and (res_one.get_resname().upper() != res_two.get_resname().upper()):
-                    if acid_base_pair_one:
-                        self._add_edges(res_one, res_two)
-                        
-                    if acid_base_pair_two:
-                        self._add_edges(res_one, res_two)
-                
-                else: # neither the first nor last amino acid
-                    
+                else:
                     if res_one.id[1] in (res_two.id[1]-1, res_two.id[1]+1) or res_two.id[1] in (res_one.id[1]-1, res_one.id[1]+1):
                         # sequential amino acids
-                        self._add_edges(res_one, res_two)
-                    elif res_one.get_resname().upper() != res_two.get_resname().upper():
-                        if acid_base_pair_one:
-                            self._add_edges(res_one, res_two)
-                        
-                        if acid_base_pair_two:
-                            self._add_edges(res_one, res_two)
+                        self._add_edges(residue_one_node, residue_two_node, edge_type="peptide")
+                    # elif res_one.get_resname() != res_two.get_resname():
+                    self._add_edges(residue_one_node, residue_two_node, edge_type="peptide")
+                           
 
-                if res_one.get_resname().upper() == "CYS" and res_two.get_resname().upper() == "CYS":
-                    self._add_edges(res_one, res_two)
-                    
         except IndexError as e:
             return f"Error message: {e.__repr__()}"
                 
@@ -285,56 +364,110 @@ class Peptide(object):
         return np.arccos(v.dot(w)/(np.linalg.norm(v)*np.linalg.norm(w)))
     
     def _add_edge(self, residue_one, residue_two, bond_type: str = "peptide") -> None:
-        node_one_name, node_two_name = f"{residue_one.get_resname()}_{residue_one.id[1]}", f"{residue_two.get_resname()}_{residue_two.id[1]}"
         if bond_type == "peptide":
-            self.graph.add_nodes_from([node_one_name, node_two_name])
-            self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 4), (node_one_name, node_two_name, 4)])
+            self.graph.add_edge(residue_one, residue_two, length=4.0)
         elif bond_type == "disulfide":
-            self.graph.add_nodes_from([node_one_name, node_two_name])
-            self.graph.add_weighted_edges_from([(node_one_name, node_two_name, 2), (node_one_name, node_two_name, 2)])
+            self.graph.add_edge(residue_one, residue_two, length=2.0)
     
-    def _add_edges(self, residue_one, residue_two) -> None:
+    def _find_node(self, attribute: str, value: str) -> bool:
+        try:
+            return any([node for node in self.graph.nodes(data=True) if node[1][attribute] == value])
+        except KeyError as e:
+            print(f"Key not found: {e.__repr__()}")
+        finally:
+            return False
+    
+    def _get_node(self, attribute: str, value: str) -> ResidueNode:
+        try:
+            return [node for node in self.graph.nodes(data=True) if node[1][attribute] == value][0]
+        except IndexError as e:
+            print(f"Key not found: {e.__repr__()}")
+        # Find appropriate way to handle the finally clause here
+    
+    def _add_node(self, node):
+        self.graph.add_node(node.name, name=str(node.residue.id[1]), type='node', tag=f"{node.name}_{node.residue.id[1]}")
         
-        distance: float
-        bond_angle: float
-        
-        sulfur_coords_one: List = [np.array(atom.get_coord()) for atom in residue_one.get_atoms() if atom.get_name() == 'SG']
-        sulfur_coords_two: List = [np.array(atom.get_coord()) for atom in residue_two.get_atoms() if atom.get_name() == 'SG']
-        
-        # # add nodes with tag to make sure that they can be searched
-        # # this would make sure that we don't get crazy amounts of bonds
-        
-        if residue_one.get_resname().strip() in non_bonding_side_chains or \
-            residue_two.get_resname().strip() in non_bonding_side_chains:        
-            coordinates_one = [np.array(atom.get_coord()) for atom in residue_one.get_atoms() if atom.get_name() == "CA" or atom.get_name() == "C1"]
-            coordinates_two = [np.array(atom.get_coord()) for atom in residue_two.get_atoms() if atom.get_name() == "CA" or atom.get_name() == "C1"]
+    def _add_disulfide_edge(self, residue_one: ResidueNode, residue_two: ResidueNode) -> bool:
+        if residue_one.form_disulfide_bond() and residue_two.form_disulfide_bond():
+            coordinates_one: List = residue_one.get_coordinates()
+            coordinates_two: List = residue_two.get_coordinates()
             
-            distance = np.linalg.norm(coordinates_one[0] - coordinates_two[0])
-            bond_angle = self._theta(coordinates_one[0], coordinates_two[0])
-                        
-            if (distance >= self.peptide_length.min and distance <= self.peptide_length.max) and ((-0.1 <= bond_angle <= 0.1) or (179.9 <= bond_angle <= 180.9)):
+            distance: float = np.linalg.norm(coordinates_one, coordinates_two)
+            bond_angle: float = self._theta(coordinates_one, coordinates_two)
+            
+            if (distance >= self.disulfide_length.min and distance <= self.disulfide_length.max) and (179.9 <= bond_angle <= 180.9):
+                self._add_node(residue_one)
+                self._add_node(residue_two)
                 self._add_edge(residue_one, residue_two)
-        else:
+                return True
+            return False
+        return False
+    
+    def _add_peptide_edge(self, residue_one: ResidueNode, residue_two: ResidueNode):
+        if residue_one.can_form_peptide_bond() and residue_two.can_form_peptide_bond():
             
-            coordinates_one = [np.array(atom.get_coord()) for atom in residue_one.get_atoms() if "C" in atom.get_name()]
-            coordinates_two = [np.array(atom.get_coord()) for atom in residue_two.get_atoms() if "C" in atom.get_name()]
+            coordinates_one: List
+            coordinates_two: List
+            
+            add_node: bool = False
+            
+            if residue_one.name in non_bonding_side_chains:
+                coordinates_one: List = residue_one.get_coordinates(element_type="CA")
+            else:
+                coordinates_one: List = residue_one.get_coordinates(element_type="C")
+            
+            if residue_two.name in non_bonding_side_chains:
+                coordinates_two: List = residue_two.get_coordinates(element_type="CA")
+            else:
+                coordinates_two: List = residue_two.get_coordinates(element_type="C")
             
             for carbon_one, carbon_two in product(coordinates_one, coordinates_two):
                 distance = np.linalg.norm(carbon_one - carbon_two)
                 bond_angle = self._theta(carbon_one, carbon_two)
-                                
+                                            
                 if (distance >= self.peptide_length.min and distance <= self.peptide_length.max) and ((-0.1 <= bond_angle <= 0.1) or (179.9 <= bond_angle <= 180.9)):
-                    self._add_edge(residue_one, residue_two)
-            
-        for sulfur_one, sulfur_two in product(sulfur_coords_one, sulfur_coords_two):
-            # Checks the presence of disulfide bonds if SG is present in AA
-            # Needs some refining because two methionines cannot form a disulfide bond
-            distance = np.linalg.norm(sulfur_one - sulfur_two)
-            bond_angle = self._theta(sulfur_one, sulfur_two)
+                    add_node = True
+                    break
 
-            if (distance >= self.disulfide_length.min and distance <= self.disulfide_length.max) and (179.9 <= bond_angle <= 180.9):
-                self._add_edge(residue_one, residue_two, bond_type="disulfide")
-                               
+            if add_node:
+                residue_one_node: ResidueNode = None
+                residue_two_node: ResidueNode = None
+                
+                node_one_present: bool = self._find_node(attribute="tag", value=f"{residue_one.name}_{residue_one.residue.id[1]}")
+                node_two_present: bool = self._find_node(attribute="tag", value=f"{residue_two.name}_{residue_two.residue.id[1]}")
+                
+                if not node_one_present:
+                    self._add_node(residue_one)
+                
+                if not node_two_present:
+                    self._add_node(residue_two)
+                    
+                residue_one_node = self._get_node(attribute="tag", value=f"{residue_one.name}_{residue_one.residue.id[1]}")
+                residue_two_node = self._get_node(attribute="tag", value=f"{residue_two.name}_{residue_two.residue.id[1]}")
+
+                if (residue_one.is_acidic() and residue_two.is_acidic()) and residue_one.is_basic() and residue_two.is_basic():
+                    pass
+                else:  
+                    if residue_one_node and residue_two_node:
+                        if  residue_one.can_form_peptide_bond() and residue_two.can_form_peptide_bond():
+                            self._add_edge(residue_one_node[0], residue_two_node[0])
+                            residue_one.form_peptide_bond()
+                            residue_two.form_peptide_bond()
+                       
+
+    def _add_ionic_interaction(self, residue_one, residue_two) -> bool:
+        # calculate ionic radius.
+        # make sure it falls between range
+        pass
+                
+    def _add_edges(self, residue_one: ResidueNode, residue_two: ResidueNode, edge_type: str) -> None:
+        if edge_type == "disulfide":
+            self._add_disulfide_edge(residue_one, residue_two)
+        elif edge_type == "peptide":
+            self._add_peptide_edge(residue_one, residue_two)
+        elif edge_type == "ionic":
+            self._add_ionic_interaction(residue_one, residue_two)
+         
     def is_cyclic(self, source: str = None, orientation: str = None) -> bool:
         """ Determines if a peptide is cyclic or not"""
         
@@ -356,7 +489,7 @@ class Peptide(object):
         
         try:
             if backbone: # Align atoms based on Ca (backbone) atoms
-                ca_coords = np.ndarray([atom.get_coords() for atom in self.residues if atom.get_name() == "CA"])
+                ca_coords = np.ndarray([atom.get_coord() for atom in self.residues if atom.get_name() == "CA"])
                 
                 assert ca_coords.shape == reference_structure.shape
                 qcp_superimposer: QCPSuperimposer = QCPSuperimposer()
@@ -365,7 +498,7 @@ class Peptide(object):
                 
                 return qcp_superimposer.rms
             else:
-                cb_coords = np.ndarray([atom.get_coords() for atom in self.residues if atom.get_name() == "CB"])
+                cb_coords = np.ndarray([atom.get_coord() for atom in self.residues if atom.get_name() == "CB"])
                 
                 assert ca_coords.shape == reference_structure.shape
                 qcp_superimposer: QCPSuperimposer = QCPSuperimposer()
