@@ -30,8 +30,8 @@ aa_code: Dict[str, str] = {'CYS': 'C', 'ASP': 'D', 'SER': 'S', 'GLN': 'Q', 'LYS'
 
 basic_aa: Tuple[str] = ("HIS", "ARG", "LYS")
 acidic_aa: Tuple[str] = ("ASP", "GLU")
-non_bonding_side_chains: List[str] = ("GLY", "SER", "LEU", "ILE", "HIS", "MET", "TYR", "ALA", "VAL", "PHE", "TRP", "PRO", "GLN", "ASN")
-backbone_atoms: List = ('CA', 'C1', 'HA', 'N', 'HN', 'H', 'C', 'O', 'H1', 'H2', 'H3', 'NH1', 'NH2', 'NH3', 'OXT')
+non_bonding_side_chains: Tuple[str] = ("GLY", "SER", "LEU", "ILE", "MET", "TYR", "ALA", "VAL", "PHE", "TRP", "PRO", "GLN", "ASN")
+backbone_atoms: Tuple[str] = ('CA', 'C1', 'HA', 'N', 'HN', 'H', 'C', 'O', 'H1', 'H2', 'H3', 'NH1', 'NH2', 'NH3', 'OXT')
 
 BOND_LENGTHS: NamedTuple = namedtuple('BondLengths', 'min max')
 
@@ -101,8 +101,6 @@ class ResidueNode(object):
         return self.disulfide
     
     def can_form_peptide_bond(self) -> bool:
-        if self._has_acidic_side_chain() or self._has_basic_side_chain():
-            return True if self.num_peptide_bonds < 3 else False
         return True if self.num_peptide_bonds < 2 else False
 
     def _has_basic_side_chain(self) -> bool:
@@ -135,25 +133,11 @@ class ResidueNode(object):
         self.num_disulfide_bonds = self.num_disulfide_bonds + 1
         
     def form_peptide_bond(self) -> bool:
-        if self.acidic_side_chain or self.basic_side_chain:
-            if self.num_peptide_bonds < 3:
-                self._increment_num_peptide_bonds()
-                return True
-            else:
-                return False
-        else:
-            if self.num_peptide_bonds < 2:
-                self._increment_num_peptide_bonds()
-                return True
-            else:
-                return False
+        return True if self.num_peptide_bonds < 2 else False
     
     def form_disulfide_bond(self) -> bool:
         if self.disulfide:
-            if self.num_disulfide_bonds < 1:
-                self._increment_num_disulfide_bonds()
-                return True
-            return False
+            return True if self.num_disulfide_bonds < 1 else False
         return False
                 
                  
@@ -176,7 +160,7 @@ class Peptide(object):
     
     def __init__(self, chain: Chain):
         self.chain: Chain = chain
-        self.peptide_length: NamedTuple = BOND_LENGTHS(2.899, 4.5) # bond lengths should be ammended
+        self.peptide_length: NamedTuple = BOND_LENGTHS(2.899, 4.25) # bond lengths should be ammended
         self.disulfide_length: NamedTuple = BOND_LENGTHS(1.999, 2.05)
         self.ionic_radii_length: NamedTuple = BOND_LENGTHS(0.3, 30)
         self.graph = nx.Graph()
@@ -293,24 +277,15 @@ class Peptide(object):
                     
                 elif not res_one_in_graph:
                     residue_one_node = self._get_node(attribute="tag", value=f"{name_one}_{res_one.id[1]}")
-                    if residue_two_node.is_acidic() or residue_two_node.is_basic():
-                        if residue_two_node.num_peptide_bonds < 3:
-                            residue_one_node = ResidueNode(name=name_one, residue=res_one)
-                    else:
-                        if residue_two_node.num_peptide_bonds < 2: # neutral amino acid
-                            residue_one_node = ResidueNode(name=name_one, residue=res_one)
-                        elif name_one =="CYS" and name_two == "CYS":
+                    if residue_two_node.num_peptide_bonds < 2: # neutral amino acid
+                        residue_one_node = ResidueNode(name=name_one, residue=res_one)
+                    elif name_one =="CYS" and name_two == "CYS":
                             residue_one_node = ResidueNode(name=name_one, residue=res_one)
                 elif not res_two_in_graph:
-                    residue_two_node = self._get_node(attribute="tag", value=f"{name_two}_{res_two.id[1]}")
-                    if residue_one_node.is_acidic() or residue_one_node.is_basic():
-                        if residue_one_node.num_peptide_bonds < 3:
-                            residue_two_node = ResidueNode(name=name_two, residue=res_two)
-                    else:
-                        if residue_one_node.num_peptide_bonds < 2:
-                            residue_two_node = ResidueNode(name=name_two, residue=res_two)
-                        elif name_one =="CYS" and name_two == "CYS":
-                            residue_two_node = ResidueNode(name=name_two, residue=res_two)
+                    if residue_one_node.num_peptide_bonds < 2:
+                        residue_two_node = ResidueNode(name=name_two, residue=res_two)
+                    elif name_one =="CYS" and name_two == "CYS":
+                        residue_two_node = ResidueNode(name=name_two, residue=res_two)
                 else:
                     residue_one_node = self._get_node(attribute="tag", value=f"{name_one}_{res_one.id[1]}")
                     residue_two_node = self._get_node(attribute="tag", value=f"{name_two}_{res_two.id[1]}")
@@ -323,7 +298,7 @@ class Peptide(object):
                 if (residue_one_node.can_form_disulfide() and residue_two_node.can_form_disulfide()) and (name_one != "MET" and name_two != "MET"):
                     self._add_edges(residue_one_node, residue_two_node, edge_type="disulfide")
                 
-                elif(res_one.id[1] == first_residue_idx or res_two.id[1] == first_residue_idx) and (res_one.id[1] == last_residue_idx or res_two.id[1] == last_residue_idx): # First and last residues
+                if(res_one.id[1] == first_residue_idx or res_two.id[1] == first_residue_idx) and (res_one.id[1] == last_residue_idx or res_two.id[1] == last_residue_idx): # First and last residues
                     self._add_edges(residue_one_node, residue_two_node, edge_type="peptide")
                 
                 elif (res_one.id[1] == first_residue_idx) and (res_two.id[1] != last_residue_idx) and (res_one.id[1] not in (res_two.id[1]-1, res_one.id[1]+1)): 
@@ -385,7 +360,7 @@ class Peptide(object):
         # Find appropriate way to handle the finally clause here
     
     def _add_node(self, node):
-        self.graph.add_node(node.name, name=str(node.residue.id[1]), type='node', tag=f"{node.name}_{node.residue.id[1]}")
+        self.graph.add_node(f"{node.name}-{node.residue.id[1]}", name=str(node.residue.id[1]), type='node', tag=f"{node.name}_{node.residue.id[1]}")
         
     def _add_disulfide_edge(self, residue_one: ResidueNode, residue_two: ResidueNode) -> bool:
         if residue_one.form_disulfide_bond() and residue_two.form_disulfide_bond():
@@ -411,14 +386,13 @@ class Peptide(object):
             
             add_node: bool = False
             
-            if residue_one.name in non_bonding_side_chains:
+            # if either of residue_one or residue_two cannot form peptide bonds with their side chain, 
+            # we only get the Ca carbon else, we check all other carbons
+            if residue_one.name in non_bonding_side_chains or residue_two.name in non_bonding_side_chains:
                 coordinates_one: List = residue_one.get_coordinates(element_type="CA")
-            else:
-                coordinates_one: List = residue_one.get_coordinates(element_type="C")
-            
-            if residue_two.name in non_bonding_side_chains:
                 coordinates_two: List = residue_two.get_coordinates(element_type="CA")
             else:
+                coordinates_one: List = residue_one.get_coordinates(element_type="C")
                 coordinates_two: List = residue_two.get_coordinates(element_type="C")
             
             for carbon_one, carbon_two in product(coordinates_one, coordinates_two):
@@ -450,9 +424,8 @@ class Peptide(object):
                 else:  
                     if residue_one_node and residue_two_node:
                         if  residue_one.can_form_peptide_bond() and residue_two.can_form_peptide_bond():
-                            self._add_edge(residue_one_node[0], residue_two_node[0])
-                            residue_one.form_peptide_bond()
-                            residue_two.form_peptide_bond()
+                            if residue_one.form_peptide_bond() and residue_two.form_peptide_bond():
+                                self._add_edge(residue_one_node[0], residue_two_node[0])
                        
 
     def _add_ionic_interaction(self, residue_one, residue_two) -> bool:
