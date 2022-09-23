@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 from Bio.PDB import PDBParser
 from descriptors.peptide import Peptide
+from descriptors.utils.phychem import PhysicoChemical
 
 def load_structure(filename: str):
     try:
@@ -38,15 +39,21 @@ if __name__ == '__main__':
             chains: List = load_structure(filename=file_name)
             for i, chain in enumerate(chains):
                 peptide: Peptide = Peptide(chain=chain)
-                print(pdb, peptide.is_cyclic(), peptide.get_sequence())
+                peptide.generate_peptide_graph()
                 graph = peptide.get_graph()
                 
-                if peptide.is_cyclic():
-                    nx.draw(graph, with_labels=True)
-                    plt.savefig(os.path.join(os.getcwd(), f"graphs/cycle/{pdb}_{i}.png"))
-                    plt.clf()
-                else:
-                    nx.draw(graph, with_labels=True)
-                    plt.savefig(os.path.join(os.getcwd(), f"graphs/no_cycle/{pdb}_{i}.png"))
-                    plt.clf()
+                physico_chemical = PhysicoChemical(chain=chain, sequence=peptide.get_one_letter_sequence())
+                
+                print(pdb, graph, peptide.get_sequence(), physico_chemical.get_mass())
+                # print(pdb, peptide.is_cyclic(), peptide.get_sequence())
+                # graph = peptide.get_graph()
+                
+                # if peptide.is_cyclic():
+                #     nx.draw(graph, with_labels=True)
+                #     plt.savefig(os.path.join(os.getcwd(), f"graphs/cycle/{pdb}_{i}.png"))
+                #     plt.clf()
+                # else:
+                #     nx.draw(graph, with_labels=True)
+                #     plt.savefig(os.path.join(os.getcwd(), f"graphs/no_cycle/{pdb}_{i}.png"))
+                #     plt.clf()
             os.remove(file_name)
