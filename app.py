@@ -42,7 +42,7 @@ if __name__ == '__main__':
                 peptide.generate_peptide_graph()
                 graph = peptide.get_graph()
                 
-                physico_chemical = PhysicoChemical(chain=chain, sequence=peptide.get_one_letter_sequence())
+                physico_chemical = PhysicoChemical(chain=chain, residues=chain, sequence=peptide.get_one_letter_sequence())
                 
                 print(pdb, graph, peptide.get_sequence(), physico_chemical.get_mass())
                 # print(pdb, peptide.is_cyclic(), peptide.get_sequence())
