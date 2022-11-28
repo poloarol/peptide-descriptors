@@ -1,4 +1,4 @@
-### peptide.py
+""" peptide.py """
 
 """
 Provides methods to obtain peptide descriptors.

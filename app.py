@@ -38,22 +38,18 @@ if __name__ == '__main__':
                 
             chains: List = load_structure(filename=file_name)
             for i, chain in enumerate(chains):
+                cycle_found: bool
+
                 peptide: Peptide = Peptide(chain=chain)
                 peptide.generate_peptide_graph()
                 graph = peptide.get_graph()
-                
+
                 physico_chemical = PhysicoChemical(chain=chain, residues=chain, sequence=peptide.get_one_letter_sequence())
+
+                try:
+                    cycle_found = any(nx.find_cycle(graph, orientation="ignore"))
+                except:
+                    cycle_found = False
                 
-                print(pdb, graph, peptide.get_sequence(), physico_chemical.get_mass())
-                # print(pdb, peptide.is_cyclic(), peptide.get_sequence())
-                # graph = peptide.get_graph()
-                
-                # if peptide.is_cyclic():
-                #     nx.draw(graph, with_labels=True)
-                #     plt.savefig(os.path.join(os.getcwd(), f"graphs/cycle/{pdb}_{i}.png"))
-                #     plt.clf()
-                # else:
-                #     nx.draw(graph, with_labels=True)
-                #     plt.savefig(os.path.join(os.getcwd(), f"graphs/no_cycle/{pdb}_{i}.png"))
-                #     plt.clf()
+                print(pdb, cycle_found, peptide.get_sequence(), physico_chemical.get_mass())
             os.remove(file_name)

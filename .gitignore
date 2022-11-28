@@ -1,5 +1,3 @@
 /env
-/data
-/descriptors/coulomb.py
 /descriptors/__pycache__
 /descriptors/utils/__pycache__

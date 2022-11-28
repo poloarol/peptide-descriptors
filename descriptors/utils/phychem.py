@@ -171,3 +171,6 @@ class PhysicoChemical(object):
             theta_angles.append(peptide.get_theta_list())
 
         return theta_angles
+    
+    def calculate_coulombic_charge(self) -> float:
+        pass
